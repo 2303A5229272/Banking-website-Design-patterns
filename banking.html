@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Banking App — Observer, Strategy, Command Patterns</title>
+  <style>
+    body{font-family:Inter,Segoe UI,Arial;max-width:1100px;margin:24px auto;padding:12px}
+    h1{font-size:20px}
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
+    .card{background:#fff;border-radius:8px;padding:12px;box-shadow:0 6px 20px rgba(0,0,0,0.06)}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+    input,select,button{padding:8px;border-radius:6px;border:1px solid #ccc}
+    .notify{max-height:220px;overflow:auto;padding:8px;gap:6px;display:flex;flex-direction:column}
+    .note{padding:8px;border-radius:6px;background:#f6f8ff;border:1px solid #dee7ff;font-size:13px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    .muted{color:#666;font-size:13px}
+    footer{margin-top:12px;color:#555}
+    .actions small{display:block;color:#777}
+  </style>
+</head>
+<body>
+  <h1>Banking App — Observer, Strategy, Command Patterns</h1>
+  <p class="muted">Single-file demo implementing Observer (notifications), Strategy (interest calculation) and Command (undoable banking operations).</p>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>Create account</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="owner" placeholder="Owner name" />
+          <select id="acctType">
+            <option value="savings">Savings</option>
+            <option value="fixed">Fixed Deposit</option>
+            <option value="current">Current</option>
+          </select>
+          <input id="initial" placeholder="Initial balance" type="number" />
+          <button id="create">Create</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h2>Accounts</h2>
+        <table id="accountsTable">
+          <thead><tr><th>ID</th><th>Owner</th><th>Type</th><th>Balance</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h2>Operations</h2>
+        <div class="controls">
+          <select id="fromAcct"></select>
+          <select id="toAcct"></select>
+          <input id="amount" placeholder="Amount" type="number" />
+          <button id="depositBtn">Deposit</button>
+          <button id="withdrawBtn">Withdraw</button>
+          <button id="transferBtn">Transfer</button>
+          <button id="applyInterest">Apply Interest</button>
+          <button id="undoBtn">Undo last</button>
+        </div>
+        <p class="muted">Tip: use small amounts for testing. Undo only reverses the last executed command.</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h3>Notifications</h3>
+        <div class="notify" id="notifications"></div>
+        <div style="margin-top:8px">
+          <button id="clearNotes">Clear</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Command Log</h3>
+        <div id="cmdLog" style="max-height:220px;overflow:auto;padding:6px;">(no commands yet)</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <small>Design patterns demo — Observer (notifications), Strategy (interest), Command (undoable operations). Open this file in a browser and interact.</small>
+  </footer>
+
+<script>
+// -----------------------------
+// Observer: NotificationCenter
+// -----------------------------
+class NotificationCenter {
+  constructor() { this.listeners = new Map(); }
+  subscribe(key, fn) {
+    if (!this.listeners.has(key)) this.listeners.set(key, new Set());
+    this.listeners.get(key).add(fn);
+  }
+  unsubscribe(key, fn) { if (this.listeners.has(key)) this.listeners.get(key).delete(fn); }
+  notify(key, payload) {
+    if (!this.listeners.has(key)) return;
+    for (const fn of this.listeners.get(key)) fn(payload);
+  }
+}
+const Notifications = new NotificationCenter();
+
+// -----------------------------
+// Strategy: Interest calculations
+// -----------------------------
+class InterestStrategy {
+  calculate(balance) { throw new Error('Not implemented'); }
+}
+class SavingsInterest extends InterestStrategy {
+  calculate(balance) { return +(balance * 0.04).toFixed(2); } // 4% simple annual for demo
+}
+class FixedDepositInterest extends InterestStrategy {
+  calculate(balance) { return +(balance * 0.07).toFixed(2); } // 7%
+}
+class CurrentInterest extends InterestStrategy {
+  calculate(balance) { return +(balance * 0.01).toFixed(2); } // 1% minimal
+}
+
+// -----------------------------
+// Core: Account
+// -----------------------------
+let nextAccountId = 1;
+class Account {
+  constructor(owner, type, balance = 0) {
+    this.id = nextAccountId++;
+    this.owner = owner;
+    this.type = type; // 'savings' | 'fixed' | 'current'
+    this.balance = +balance;
+    this.setInterestStrategyByType(type);
+    // subscribe to notifications if needed — accounts can observe events too
+  }
+  setInterestStrategyByType(type) {
+    switch(type) {
+      case 'savings': this.interestStrategy = new SavingsInterest(); break;
+      case 'fixed': this.interestStrategy = new FixedDepositInterest(); break;
+      case 'current': this.interestStrategy = new CurrentInterest(); break;
+      default: this.interestStrategy = new SavingsInterest();
+    }
+  }
+  applyInterest() {
+    const interest = this.interestStrategy.calculate(this.balance);
+    if (interest === 0) return 0;
+    this.balance = +(this.balance + interest).toFixed(2);
+    Notifications.notify('account:' + this.id, {type:'interest', amount: interest, balance: this.balance});
+    return interest;
+  }
+}
+
+// -----------------------------
+// Command Pattern
+// -----------------------------
+class Command {
+  execute() { throw new Error('execute not implemented'); }
+  undo() { throw new Error('undo not implemented'); }
+}
+
+class DepositCommand extends Command {
+  constructor(account, amount) { super(); this.account = account; this.amount = +amount; }
+  execute() {
+    this.account.balance = +(this.account.balance + this.amount).toFixed(2);
+    Notifications.notify('account:' + this.account.id, {type:'deposit', amount:this.amount, balance:this.account.balance});
+  }
+  undo() {
+    this.account.balance = +(this.account.balance - this.amount).toFixed(2);
+    Notifications.notify('account:' + this.account.id, {type:'undo-deposit', amount:this.amount, balance:this.account.balance});
+  }
+}
+
+class WithdrawCommand extends Command {
+  constructor(account, amount) { super(); this.account = account; this.amount = +amount; }
+  execute() {
+    if (this.account.balance < this.amount) { throw new Error('Insufficient funds'); }
+    this.account.balance = +(this.account.balance - this.amount).toFixed(2);
+    Notifications.notify('account:' + this.account.id, {type:'withdraw', amount:this.amount, balance:this.account.balance});
+  }
+  undo() {
+    this.account.balance = +(this.account.balance + this.amount).toFixed(2);
+    Notifications.notify('account:' + this.account.id, {type:'undo-withdraw', amount:this.amount, balance:this.account.balance});
+  }
+}
+
+class TransferCommand extends Command {
+  constructor(fromAcct, toAcct, amount) { super(); this.from = fromAcct; this.to = toAcct; this.amount = +amount; }
+  execute() {
+    if (this.from.balance < this.amount) throw new Error('Insufficient funds');
+    this.from.balance = +(this.from.balance - this.amount).toFixed(2);
+    this.to.balance = +(this.to.balance + this.amount).toFixed(2);
+    Notifications.notify('account:' + this.from.id, {type:'transfer-out', amount:this.amount, to:this.to.id, balance:this.from.balance});
+    Notifications.notify('account:' + this.to.id, {type:'transfer-in', amount:this.amount, from:this.from.id, balance:this.to.balance});
+  }
+  undo() {
+    // reverse
+    this.from.balance = +(this.from.balance + this.amount).toFixed(2);
+    this.to.balance = +(this.to.balance - this.amount).toFixed(2);
+    Notifications.notify('account:' + this.from.id, {type:'undo-transfer-in', amount:this.amount, balance:this.from.balance});
+    Notifications.notify('account:' + this.to.id, {type:'undo-transfer-out', amount:this.amount, balance:this.to.balance});
+  }
+}
+
+class CommandManager {
+  constructor() { this.history = []; }
+  executeCommand(cmd) {
+    cmd.execute();
+    this.history.push(cmd);
+    renderCommandLog();
+  }
+  undoLast() {
+    const cmd = this.history.pop();
+    if (!cmd) throw new Error('No command to undo');
+    cmd.undo();
+    renderCommandLog();
+  }
+}
+const CmdManager = new CommandManager();
+
+// -----------------------------
+// In-memory bank
+// -----------------------------
+const Bank = {
+  accounts: [],
+  createAccount(owner, type, initial) {
+    const acc = new Account(owner, type, +initial);
+    this.accounts.push(acc);
+    // small example: subscribe the notifications display to this account channel
+    Notifications.subscribe('account:' + acc.id, (payload) => displayNotification(acc, payload));
+    Notifications.notify('global', {type:'account-created', account: acc});
+    return acc;
+  },
+  find(id) { return this.accounts.find(a=>a.id===+id); }
+};
+
+// -----------------------------
+// UI wiring
+// -----------------------------
+const ownerEl = document.getElementById('owner');
+const acctTypeEl = document.getElementById('acctType');
+const initialEl = document.getElementById('initial');
+const createBtn = document.getElementById('create');
+const accountsTableBody = document.querySelector('#accountsTable tbody');
+const fromAcct = document.getElementById('fromAcct');
+const toAcct = document.getElementById('toAcct');
+const amountEl = document.getElementById('amount');
+const depositBtn = document.getElementById('depositBtn');
+const withdrawBtn = document.getElementById('withdrawBtn');
+const transferBtn = document.getElementById('transferBtn');
+const applyInterestBtn = document.getElementById('applyInterest');
+const undoBtn = document.getElementById('undoBtn');
+const notificationsDiv = document.getElementById('notifications');
+const clearNotesBtn = document.getElementById('clearNotes');
+const cmdLogEl = document.getElementById('cmdLog');
+
+createBtn.addEventListener('click', ()=>{
+  const owner = ownerEl.value.trim() || 'Anonymous';
+  const type = acctTypeEl.value;
+  const initial = parseFloat(initialEl.value) || 0;
+  const acc = Bank.createAccount(owner, type, initial);
+  ownerEl.value=''; initialEl.value='';
+  renderAccounts();
+  addNote(Account created — ID ${acc.id} (${acc.owner}, ${acc.type}));
+});
+
+function renderAccounts(){
+  accountsTableBody.innerHTML = '';
+  fromAcct.innerHTML = '<option value="">Select</option>';
+  toAcct.innerHTML = '<option value="">Select</option>';
+  for (const a of Bank.accounts) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = <td>${a.id}</td><td>${a.owner}</td><td>${a.type}</td><td>${a.balance.toFixed(2)}</td><td class="actions"><button data-id="${a.id}" class="view">View</button> <small>Subscribe=auto</small></td>;
+    accountsTableBody.appendChild(tr);
+    const opt = document.createElement('option'); opt.value = a.id; opt.textContent = ${a.id} — ${a.owner};
+    fromAcct.appendChild(opt.cloneNode(true));
+    toAcct.appendChild(opt.cloneNode(true));
+  }
+}
+
+// Buttons
+depositBtn.addEventListener('click', ()=>{
+  performSimpleCommand('deposit');
+});
+withdrawBtn.addEventListener('click', ()=>{
+  performSimpleCommand('withdraw');
+});
+transferBtn.addEventListener('click', ()=>{
+  performSimpleCommand('transfer');
+});
+applyInterestBtn.addEventListener('click', ()=>{
+  const id = +fromAcct.value; if (!id) return alert('choose account in left selector');
+  const acc = Bank.find(id);
+  const amount = acc.applyInterest();
+  renderAccounts();
+  addNote(Interest applied to ${acc.id}: +${amount.toFixed(2)} (new balance ${acc.balance.toFixed(2)}));
+  renderCommandLog();
+});
+undoBtn.addEventListener('click', ()=>{
+  try { CmdManager.undoLast(); renderAccounts(); addNote('Undid last command'); }
+  catch(e){ alert(e.message); }
+});
+
+clearNotesBtn.addEventListener('click', ()=>{ notificationsDiv.innerHTML=''; });
+
+function performSimpleCommand(kind){
+  try {
+    const fromId = +fromAcct.value;
+    const toId = +toAcct.value;
+    const amount = +amountEl.value;
+    if (!amount || amount <= 0) return alert('Enter positive amount');
+    if (kind === 'deposit') {
+      if (!fromId) return alert('Choose account to deposit into (left selector)');
+      const acc = Bank.find(fromId);
+      const cmd = new DepositCommand(acc, amount);
+      CmdManager.executeCommand(cmd);
+      renderAccounts(); addNote(Deposited ${amount.toFixed(2)} to ${acc.id});
+    } else if (kind === 'withdraw') {
+      if (!fromId) return alert('Choose account to withdraw from (left selector)');
+      const acc = Bank.find(fromId);
+      const cmd = new WithdrawCommand(acc, amount);
+      CmdManager.executeCommand(cmd);
+      renderAccounts(); addNote(Withdrew ${amount.toFixed(2)} from ${acc.id});
+    } else if (kind === 'transfer') {
+      if (!fromId || !toId) return alert('Choose both accounts');
+      if (fromId === toId) return alert('Choose different accounts');
+      const from = Bank.find(fromId), to = Bank.find(toId);
+      const cmd = new TransferCommand(from, to, amount);
+      CmdManager.executeCommand(cmd);
+      renderAccounts(); addNote(Transferred ${amount.toFixed(2)} from ${from.id} to ${to.id});
+    }
+    renderCommandLog();
+  } catch(e) { alert(e.message); }
+}
+
+// Notifications view helpers
+function displayNotification(account, payload){
+  const txt = formatNotification(account, payload);
+  addNote(txt);
+}
+
+function formatNotification(account, p){
+  switch(p.type){
+    case 'deposit': return Account ${account.id} — ${account.owner}: Deposit +${p.amount.toFixed(2)} (bal ${p.balance.toFixed(2)});
+    case 'withdraw': return Account ${account.id} — ${account.owner}: Withdraw -${p.amount.toFixed(2)} (bal ${p.balance.toFixed(2)});
+    case 'transfer-out': return Account ${account.id}: Transferred -${p.amount.toFixed(2)} to acct ${p.to} (bal ${p.balance.toFixed(2)});
+    case 'transfer-in': return Account ${account.id}: Received +${p.amount.toFixed(2)} from acct ${p.from} (bal ${p.balance.toFixed(2)});
+    case 'interest': return Account ${account.id}: Interest +${p.amount.toFixed(2)} applied (bal ${p.balance.toFixed(2)});
+    case 'undo-deposit': return Account ${account.id}: Undo deposit -${p.amount.toFixed(2)} (bal ${p.balance.toFixed(2)});
+    case 'undo-withdraw': return Account ${account.id}: Undo withdraw +${p.amount.toFixed(2)} (bal ${p.balance.toFixed(2)});
+    case 'undo-transfer-in': return Account ${account.id}: Undo transfer in +${p.amount.toFixed(2)} (bal ${p.balance.toFixed(2)});
+    case 'undo-transfer-out': return Account ${account.id}: Undo transfer out -${p.amount.toFixed(2)} (bal ${p.balance.toFixed(2)});
+    default: return JSON.stringify(p);
+  }
+}
+
+function addNote(text){
+  const div = document.createElement('div'); div.className='note'; div.textContent = [${new Date().toLocaleTimeString()}] ${text};
+  notificationsDiv.prepend(div);
+}
+
+function renderCommandLog(){
+  if (CmdManager.history.length === 0) { cmdLogEl.textContent = '(no commands yet)'; return; }
+  cmdLogEl.innerHTML = '';
+  CmdManager.history.slice().reverse().forEach((c, i)=>{
+    const d = document.createElement('div'); d.style.padding='6px'; d.style.borderBottom='1px solid #eee';
+    d.textContent = ${i+1}. ${c.constructor.name} — summary: ${cmdSummary(c)};
+    cmdLogEl.appendChild(d);
+  });
+}
+
+function cmdSummary(c){
+  if (c instanceof DepositCommand) return Acct ${c.account.id} +${c.amount.toFixed(2)};
+  if (c instanceof WithdrawCommand) return Acct ${c.account.id} -${c.amount.toFixed(2)};
+  if (c instanceof TransferCommand) return From ${c.from.id} -> ${c.to.id} ${c.amount.toFixed(2)};
+  return 'Command';
+}
+
+// demo: subscribe to global events
+Notifications.subscribe('global', (p)=>{
+  if (p.type === 'account-created') addNote((global) New account: ${p.account.id} — ${p.account.owner});
+});
+
+// seed some data for convenience
+Bank.createAccount('Alice', 'savings', 1000);
+Bank.createAccount('Bob', 'current', 200);
+Bank.createAccount('CorpCorp', 'fixed', 5000);
+renderAccounts();
+renderCommandLog();
+
+</script>
+</body>
+</html>
